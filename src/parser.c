@@ -117,8 +117,15 @@ static Operand parse_operand(Parser *parser) {
     else if (parser->current.type == TOKEN_LBRACKET) {
         op = parse_memory(parser);
     }
+    else if (parser->current.type == TOKEN_IDENTIFIER) {
+        /* Identificadores: nombres de etiquetas, secciones (.text, .data) */
+        op.type = OPERAND_IMMEDIATE;
+        strncpy(op.base, parser->current.lexeme, 15);
+        advance(parser);
+    }
     else {
         parse_error(parser, "operando invalido");
+        advance(parser); /* avanzar para evitar loop infinito */
     }
 
     return op;
@@ -157,7 +164,10 @@ static ASTNode parse_line(Parser *parser) {
                 advance(parser);
                 continue;
             }
-            node.operands[node.operand_count++] = parse_operand(parser);
+            if (node.operand_count < 3)
+                node.operands[node.operand_count++] = parse_operand(parser);
+            else
+                advance(parser);
         }
         return node;
     }
@@ -171,14 +181,22 @@ static ASTNode parse_line(Parser *parser) {
         /* Leer operandos */
         if (parser->current.type != TOKEN_NEWLINE &&
             parser->current.type != TOKEN_EOF) {
-            node.operands[node.operand_count++] = parse_operand(parser);
+            if (node.operand_count < 3)
+                node.operands[node.operand_count++] = parse_operand(parser);
 
             while (parser->current.type == TOKEN_COMMA) {
                 advance(parser); /* consumir , */
-                node.operands[node.operand_count++] = parse_operand(parser);
+                if (node.operand_count < 3)
+                    node.operands[node.operand_count++] = parse_operand(parser);
             }
         }
         return node;
+    }
+
+    /* Token desconocido: avanzar para evitar loop infinito */
+    if (parser->current.type != TOKEN_NEWLINE &&
+        parser->current.type != TOKEN_EOF) {
+        advance(parser);
     }
 
     return node;
