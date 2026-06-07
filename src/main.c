@@ -13,13 +13,36 @@
 
 static void print_usage(const char *prog) {
     printf("Uso:\n");
-    printf("  %s -a <archivo.asm> -o <salida.o>        Ensamblar\n", prog);
-    printf("  %s -l <obj1.o> [obj2.o ...] -o <salida>  Linkear\n",  prog);
-    printf("  %s -al <archivo.asm> -o <salida>          Ensamblar y linkear\n", prog);
-    printf("  %s -p <archivo.o>                         Imprimir objeto\n", prog);
+    printf("  %s -a <archivo.asm> -o <salida.o>                  Ensamblar\n", prog);
+    printf("  %s -l <obj1.o> [obj2.o ...] -o <salida> [--hex <salida.hex>]  Linkear\n", prog);
+    printf("  %s -al <archivo.asm> -o <salida> [--hex <salida.hex>]         Ensamblar y linkear\n", prog);
+    printf("  %s -p <archivo.o>                                  Imprimir objeto\n", prog);
     printf("\nOpciones:\n");
     printf("  -1    Usar ensamblador de una pasada (por defecto: dos pasadas)\n");
     printf("  -v    Modo verbose (imprime tokens, AST y codigo)\n");
+    printf("  --hex Generar archivo hexadecimal legible ademas del binario\n");
+}
+
+/* ============================================================
+   ESCRITURA DE ARCHIVO HEX
+   ============================================================ */
+
+static int write_hex(const char *filename,
+                     unsigned char *data, unsigned int size) {
+    FILE *f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "Error: no se pudo crear '%s'\n", filename);
+        return -1;
+    }
+    for (unsigned int i = 0; i < size; i++) {
+        fprintf(f, "%02X", data[i]);
+        if ((i + 1) % 16 == 0) fprintf(f, "\n");
+        else fprintf(f, " ");
+    }
+    if (size % 16 != 0) fprintf(f, "\n");
+    fclose(f);
+    printf("Archivo hex escrito: %s\n", filename);
+    return 0;
 }
 
 /* ============================================================
@@ -98,7 +121,6 @@ static int assemble(const char *input, const char *output,
         return -1;
     }
 
-    /* Escribir archivo objeto */
     result = obj_write(output, assembler);
 
     assembler_destroy(assembler);
@@ -113,7 +135,9 @@ static int assemble(const char *input, const char *output,
    ============================================================ */
 
 static int link_objects(char **inputs, int count,
-                         const char *output, int verbose) {
+                         const char *output,
+                         const char *hex_output,
+                         int verbose) {
     Linker *linker = linker_create();
     if (!linker) return -1;
 
@@ -134,6 +158,28 @@ static int link_objects(char **inputs, int count,
         linker_print(linker);
 
     int result = linker_write_binary(linker, output);
+
+    /* Generar archivo hex si se pidio */
+    if (result == 0 && hex_output && hex_output[0] != '\0') {
+        unsigned char *all = (unsigned char *)malloc(
+            linker->text_size + linker->data_size + linker->bss_size);
+        unsigned int total = 0;
+        if (linker->text_size > 0) {
+            memcpy(all + total, linker->text, linker->text_size);
+            total += linker->text_size;
+        }
+        if (linker->data_size > 0) {
+            memcpy(all + total, linker->data, linker->data_size);
+            total += linker->data_size;
+        }
+        if (linker->bss_size > 0) {
+            memset(all + total, 0, linker->bss_size);
+            total += linker->bss_size;
+        }
+        write_hex(hex_output, all, total);
+        free(all);
+    }
+
     linker_destroy(linker);
     return result;
 }
@@ -148,23 +194,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int   one_pass  = 0;
-    int   verbose   = 0;
-    char *mode      = NULL;
-    char *output    = NULL;
+    int   one_pass    = 0;
+    int   verbose     = 0;
+    char *mode        = NULL;
+    char *output      = NULL;
+    char *hex_output  = NULL;
     char *inputs[32];
     int   input_count = 0;
 
     /* Parsear argumentos */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-1")  == 0) { one_pass = 1; }
-        else if (strcmp(argv[i], "-v")  == 0) { verbose  = 1; }
-        else if (strcmp(argv[i], "-a")  == 0) { mode = "assemble"; }
-        else if (strcmp(argv[i], "-l")  == 0) { mode = "link"; }
-        else if (strcmp(argv[i], "-al") == 0) { mode = "both"; }
-        else if (strcmp(argv[i], "-p")  == 0) { mode = "print"; }
-        else if (strcmp(argv[i], "-o")  == 0) {
+        if (strcmp(argv[i], "-1")    == 0) { one_pass = 1; }
+        else if (strcmp(argv[i], "-v")    == 0) { verbose  = 1; }
+        else if (strcmp(argv[i], "-a")    == 0) { mode = "assemble"; }
+        else if (strcmp(argv[i], "-l")    == 0) { mode = "link"; }
+        else if (strcmp(argv[i], "-al")   == 0) { mode = "both"; }
+        else if (strcmp(argv[i], "-p")    == 0) { mode = "print"; }
+        else if (strcmp(argv[i], "-o")    == 0) {
             if (i + 1 < argc) output = argv[++i];
+        }
+        else if (strcmp(argv[i], "--hex") == 0) {
+            if (i + 1 < argc) hex_output = argv[++i];
         }
         else {
             if (input_count < 32)
@@ -193,7 +243,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error: se requiere al menos un objeto y salida\n");
             return 1;
         }
-        return link_objects(inputs, input_count, output, verbose) == 0 ? 0 : 1;
+        return link_objects(inputs, input_count, output,
+                            hex_output, verbose) == 0 ? 0 : 1;
     }
 
     /* Modo: ensamblar y linkear */
@@ -209,7 +260,8 @@ int main(int argc, char *argv[]) {
             return 1;
 
         char *obj_list[] = { obj_tmp };
-        return link_objects(obj_list, 1, output, verbose) == 0 ? 0 : 1;
+        return link_objects(obj_list, 1, output,
+                            hex_output, verbose) == 0 ? 0 : 1;
     }
 
     /* Modo: imprimir archivo objeto */
