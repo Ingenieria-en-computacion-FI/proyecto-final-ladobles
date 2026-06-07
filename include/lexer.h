@@ -1,59 +1,40 @@
 #ifndef LEXER_H
 #define LEXER_H
 
-#include "parser.h"
+typedef enum {
+    TOKEN_IDENTIFIER,
+    TOKEN_NUMBER,
+    TOKEN_REGISTER,
+    TOKEN_INSTRUCTION,
+    TOKEN_DIRECTIVE,
+    TOKEN_COMMA,
+    TOKEN_COLON,
+    TOKEN_LBRACKET,
+    TOKEN_RBRACKET,
+    TOKEN_PLUS,
+    TOKEN_MINUS,
+    TOKEN_STAR,
+    TOKEN_NEWLINE,
+    TOKEN_EOF,
+    TOKEN_UNKNOWN
+} TokenType;
 
-/* Registros soportados — 32 bits y 8 bits */
-#define REG_EAX 0
-#define REG_ECX 1
-#define REG_EDX 2
-#define REG_EBX 3
-#define REG_ESP 4
-#define REG_EBP 5
-#define REG_ESI 6
-#define REG_EDI 7
+typedef struct {
+    TokenType type;
+    char lexeme[64];
+    int line;
+} Token;
 
-/* Registros de 8 bits */
-#define REG_AL  8
-#define REG_CL  9
-#define REG_DL  10
-#define REG_BL  11
-#define REG_AH  12
-#define REG_CH  13
-#define REG_DH  14
-#define REG_BH  15
-#define REG_NONE -1
+typedef struct {
+    char *source;
+    int pos;
+    int line;
+    int length;
+} Lexer;
 
-/* Construccion de bytes ModRM y SIB */
-unsigned char build_modrm(unsigned char mod,
-                           unsigned char reg,
-                           unsigned char rm);
+Lexer *lexer_create(const char *filename);
+void   lexer_destroy(Lexer *lexer);
+Token  lexer_next_token(Lexer *lexer);
+void   token_print(Token token);
 
-unsigned char build_sib(unsigned char scale,
-                         unsigned char index,
-                         unsigned char base);
-
-/* Verifica si un registro es de 8 bits */
-int reg_is8(int reg);
-
-/* Verifica si un registro es de 32 bits */
-int reg_is32(int reg);
-
-/* Obtiene el numero de registro a partir de su nombre */
-int reg_number(const char *name);
-
-/* Calcula el tamanio en bytes de una instruccion */
-int get_instruction_size(ASTNode *node);
-
-/* Retorna el nombre del simbolo pendiente de una instruccion */
-const char *get_pending_symbol(ASTNode *node);
-
-/* Retorna el offset dentro de la instruccion donde va el simbolo */
-int get_pending_offset(ASTNode *node);
-
-/* Codifica una instruccion y escribe los bytes en buf
-   Retorna el numero de bytes escritos, o -1 si hay simbolo pendiente */
-int encode_instruction(ASTNode *node, SymbolTable *symbols,
-                       unsigned char *buf, int current_offset);
-
-#endif /* ENCODER_H */
+#endif /* LEXER_H */
