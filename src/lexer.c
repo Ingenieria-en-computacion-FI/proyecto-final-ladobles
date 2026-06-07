@@ -4,10 +4,12 @@
 #include <ctype.h>
 #include "../include/lexer.h"
 
-/* Registros soportados */
+/* Registros soportados — 32 bits y 8 bits */
 static const char *registers[] = {
     "EAX", "EBX", "ECX", "EDX",
     "ESI", "EDI", "EBP", "ESP",
+    "AL", "AH", "BL", "BH",
+    "CL", "CH", "DL", "DH",
     NULL
 };
 
@@ -18,6 +20,7 @@ static const char *instructions[] = {
     "AND", "OR", "XOR", "NOT",
     "JMP", "JE", "JNE", "JG", "JL", "JGE", "JLE",
     "CALL", "RET", "NOP", "INT",
+    "MOVZX",
     NULL
 };
 
@@ -153,7 +156,6 @@ Token lexer_next_token(Lexer *lexer) {
     /* Numero decimal o hexadecimal */
     if (isdigit(c)) {
         int i = 0;
-        /* Hexadecimal 0x... */
         if (c == '0' && lexer->pos + 1 < lexer->length &&
             (lexer->source[lexer->pos + 1] == 'x' ||
              lexer->source[lexer->pos + 1] == 'X')) {
