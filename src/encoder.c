@@ -7,6 +7,16 @@
    UTILIDADES DE REGISTROS
    ============================================================ */
 
+/* Verifica si un registro es de 32 bits */
+int reg_is32(int reg) {
+    return reg >= REG_EAX && reg <= REG_EDI;
+}
+
+/* Verifica si un registro es de 8 bits */
+int reg_is8(int reg) {
+    return reg >= REG_AL && reg <= REG_BH;
+}
+
 /* Retorna el numero de registro IA-32 a partir de su nombre */
 int reg_number(const char *name) {
     if (strcmp(name, "EAX") == 0) return REG_EAX;
@@ -17,28 +27,49 @@ int reg_number(const char *name) {
     if (strcmp(name, "EBP") == 0) return REG_EBP;
     if (strcmp(name, "ESI") == 0) return REG_ESI;
     if (strcmp(name, "EDI") == 0) return REG_EDI;
+    /* Registros de 8 bits */
+    if (strcmp(name, "AL") == 0) return REG_AL;
+    if (strcmp(name, "CL") == 0) return REG_CL;
+    if (strcmp(name, "DL") == 0) return REG_DL;
+    if (strcmp(name, "BL") == 0) return REG_BL;
+    if (strcmp(name, "AH") == 0) return REG_AH;
+    if (strcmp(name, "CH") == 0) return REG_CH;
+    if (strcmp(name, "DH") == 0) return REG_DH;
+    if (strcmp(name, "BH") == 0) return REG_BH;
     return -1;
+}
+
+/* Retorna el codigo de registro (0-7) para ModRM/SIB */
+static int reg_code(int reg) {
+    switch (reg) {
+        case REG_EAX: case REG_AL: return 0;
+        case REG_ECX: case REG_CL: return 1;
+        case REG_EDX: case REG_DL: return 2;
+        case REG_EBX: case REG_BL: return 3;
+        case REG_ESP: case REG_AH: return 4;
+        case REG_EBP: case REG_CH: return 5;
+        case REG_ESI: case REG_DH: return 6;
+        case REG_EDI: case REG_BH: return 7;
+        default: return 0;
+    }
 }
 
 /* ============================================================
    CONSTRUCCION DE MODRM Y SIB
    ============================================================ */
 
-/* Construye el byte ModRM */
 unsigned char build_modrm(unsigned char mod,
                            unsigned char reg,
                            unsigned char rm) {
     return (mod << 6) | (reg << 3) | rm;
 }
 
-/* Construye el byte SIB */
 unsigned char build_sib(unsigned char scale,
                          unsigned char index,
                          unsigned char base) {
     return (scale << 6) | (index << 3) | base;
 }
 
-/* Convierte escala numerica a campo ss del SIB */
 static unsigned char scale_to_ss(int scale) {
     switch (scale) {
         case 1: return 0;
@@ -53,16 +84,14 @@ static unsigned char scale_to_ss(int scale) {
    CODIFICACION DE OPERANDOS DE MEMORIA
    ============================================================ */
 
-/* Escribe los bytes de direccionamiento de memoria en buf
-   Retorna cuantos bytes escribio */
 static int encode_memory(Operand *op, int reg_field,
                           unsigned char *buf) {
     int pos = 0;
     int has_base  = op->base[0]  != '\0';
     int has_index = op->index[0] != '\0';
     int has_disp  = op->displacement != 0;
-    int base_reg  = has_base  ? reg_number(op->base)  : 0;
-    int index_reg = has_index ? reg_number(op->index) : 0;
+    int base_reg  = has_base  ? reg_code(reg_number(op->base))  : 0;
+    int index_reg = has_index ? reg_code(reg_number(op->index)) : 0;
 
     /* Memoria directa: [1000] sin registros */
     if (!has_base && !has_index) {
@@ -83,7 +112,6 @@ static int encode_memory(Operand *op, int reg_field,
     else
         mod = 0x02;
 
-    /* Necesita SIB si hay indice o si la base es ESP */
     int needs_sib = has_index || (has_base && base_reg == REG_ESP);
 
     if (needs_sib) {
@@ -95,7 +123,6 @@ static int encode_memory(Operand *op, int reg_field,
         buf[pos++] = build_modrm(mod, reg_field, base_reg);
     }
 
-    /* Desplazamiento */
     if (mod == 0x01) {
         buf[pos++] = op->displacement & 0xFF;
     } else if (mod == 0x02) {
@@ -112,7 +139,6 @@ static int encode_memory(Operand *op, int reg_field,
    SIMBOLOS PENDIENTES
    ============================================================ */
 
-/* Retorna el nombre del simbolo pendiente en una instruccion */
 const char *get_pending_symbol(ASTNode *node) {
     for (int i = 0; i < node->operand_count; i++) {
         if (node->operands[i].type == OPERAND_IMMEDIATE &&
@@ -122,9 +148,7 @@ const char *get_pending_symbol(ASTNode *node) {
     return NULL;
 }
 
-/* Retorna el offset dentro de la instruccion donde va el simbolo */
 int get_pending_offset(ASTNode *node) {
-    /* Para la mayoria de instrucciones el simbolo va al final */
     return get_instruction_size(node) - 4;
 }
 
@@ -135,42 +159,43 @@ int get_pending_offset(ASTNode *node) {
 int get_instruction_size(ASTNode *node) {
     const char *m = node->mnemonic;
 
-    /* Instrucciones de un solo byte */
     if (strcmp(m, "RET") == 0) return 1;
     if (strcmp(m, "NOP") == 0) return 1;
 
-    /* PUSH/POP registro */
     if (strcmp(m, "PUSH") == 0 || strcmp(m, "POP") == 0) {
         if (node->operand_count > 0 &&
             node->operands[0].type == OPERAND_REGISTER)
             return 1;
-        return 5; /* PUSH imm32 */
+        return 5;
     }
 
-    /* Saltos cortos y CALL */
     if (strcmp(m, "JMP")  == 0 || strcmp(m, "CALL") == 0) return 5;
     if (strcmp(m, "JE")   == 0 || strcmp(m, "JNE")  == 0) return 6;
     if (strcmp(m, "JG")   == 0 || strcmp(m, "JL")   == 0) return 6;
     if (strcmp(m, "JGE")  == 0 || strcmp(m, "JLE")  == 0) return 6;
 
-    /* INT */
     if (strcmp(m, "INT")  == 0) return 2;
-
-    /* INC/DEC/NEG/NOT registro */
     if (strcmp(m, "INC")  == 0 || strcmp(m, "DEC") == 0) return 2;
     if (strcmp(m, "NEG")  == 0 || strcmp(m, "NOT") == 0) return 2;
-
-    /* MUL/DIV/IMUL/IDIV */
     if (strcmp(m, "MUL")  == 0 || strcmp(m, "DIV")  == 0) return 2;
     if (strcmp(m, "IMUL") == 0 || strcmp(m, "IDIV") == 0) return 2;
 
-    /* MOV reg, imm32 */
+    /* MOVZX: 0F B6 ModRM = 3 bytes */
+    if (strcmp(m, "MOVZX") == 0) return 3;
+
     if (strcmp(m, "MOV") == 0) {
         if (node->operand_count == 2) {
+            int r0 = reg_number(node->operands[0].base);
+            /* MOV reg8, imm8 = 2 bytes */
+            if (node->operands[0].type == OPERAND_REGISTER &&
+                node->operands[1].type == OPERAND_IMMEDIATE &&
+                reg_is8(r0))
+                return 2;
+            /* MOV reg32, imm32 = 5 bytes */
             if (node->operands[0].type == OPERAND_REGISTER &&
                 node->operands[1].type == OPERAND_IMMEDIATE)
                 return 5;
-            /* MOV reg, reg */
+            /* MOV reg, reg = 2 bytes */
             if (node->operands[0].type == OPERAND_REGISTER &&
                 node->operands[1].type == OPERAND_REGISTER)
                 return 2;
@@ -179,7 +204,6 @@ int get_instruction_size(ASTNode *node) {
         }
     }
 
-    /* ADD, SUB, CMP, AND, OR, XOR reg, imm */
     if (strcmp(m, "ADD") == 0 || strcmp(m, "SUB") == 0 ||
         strcmp(m, "CMP") == 0 || strcmp(m, "AND") == 0 ||
         strcmp(m, "OR")  == 0 || strcmp(m, "XOR") == 0) {
@@ -189,10 +213,9 @@ int get_instruction_size(ASTNode *node) {
         return 2;
     }
 
-    /* LEA */
     if (strcmp(m, "LEA") == 0) return 6;
 
-    return 4; /* tamanio por defecto */
+    return 4;
 }
 
 /* ============================================================
@@ -228,7 +251,7 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
     /* --- PUSH --- */
     if (strcmp(m, "PUSH") == 0) {
         if (op0->type == OPERAND_REGISTER) {
-            buf[pos++] = 0x50 + reg_number(op0->base);
+            buf[pos++] = 0x50 + reg_code(reg_number(op0->base));
         } else {
             buf[pos++] = 0x68;
             int v = op0->immediate;
@@ -243,52 +266,67 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
     /* --- POP --- */
     if (strcmp(m, "POP") == 0) {
         if (op0->type == OPERAND_REGISTER)
-            buf[pos++] = 0x58 + reg_number(op0->base);
+            buf[pos++] = 0x58 + reg_code(reg_number(op0->base));
         return pos;
     }
 
     /* --- INC / DEC --- */
     if (strcmp(m, "INC") == 0 && op0->type == OPERAND_REGISTER) {
-        buf[pos++] = 0x40 + reg_number(op0->base);
+        buf[pos++] = 0x40 + reg_code(reg_number(op0->base));
         return pos;
     }
     if (strcmp(m, "DEC") == 0 && op0->type == OPERAND_REGISTER) {
-        buf[pos++] = 0x48 + reg_number(op0->base);
+        buf[pos++] = 0x48 + reg_code(reg_number(op0->base));
         return pos;
     }
 
     /* --- NEG / NOT --- */
     if (strcmp(m, "NEG") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 3, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 3, reg_code(reg_number(op0->base)));
         return pos;
     }
     if (strcmp(m, "NOT") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 2, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 2, reg_code(reg_number(op0->base)));
         return pos;
     }
 
     /* --- MUL / DIV / IMUL / IDIV --- */
     if (strcmp(m, "MUL") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 4, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 4, reg_code(reg_number(op0->base)));
         return pos;
     }
     if (strcmp(m, "DIV") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 6, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 6, reg_code(reg_number(op0->base)));
         return pos;
     }
     if (strcmp(m, "IMUL") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 5, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 5, reg_code(reg_number(op0->base)));
         return pos;
     }
     if (strcmp(m, "IDIV") == 0) {
         buf[pos++] = 0xF7;
-        buf[pos++] = build_modrm(0x03, 7, reg_number(op0->base));
+        buf[pos++] = build_modrm(0x03, 7, reg_code(reg_number(op0->base)));
         return pos;
+    }
+
+    /* --- MOVZX reg32, reg8 --- */
+    if (strcmp(m, "MOVZX") == 0) {
+        if (op0->type == OPERAND_REGISTER &&
+            op1->type == OPERAND_REGISTER) {
+            int dst = reg_number(op0->base);
+            int src = reg_number(op1->base);
+            buf[pos++] = 0x0F;
+            buf[pos++] = 0xB6;
+            buf[pos++] = build_modrm(0x03,
+                                     reg_code(dst),
+                                     reg_code(src));
+            return pos;
+        }
     }
 
     /* --- JMP --- */
@@ -344,10 +382,20 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
 
     /* --- MOV --- */
     if (strcmp(m, "MOV") == 0) {
-        /* MOV reg, imm32 */
+        int r0 = op0 ? reg_number(op0->base) : -1;
+
+        /* MOV reg8, imm8 */
+        if (op0->type == OPERAND_REGISTER &&
+            op1->type == OPERAND_IMMEDIATE &&
+            reg_is8(r0)) {
+            buf[pos++] = 0xB0 + reg_code(r0);
+            buf[pos++] = op1->immediate & 0xFF;
+            return pos;
+        }
+        /* MOV reg32, imm32 */
         if (op0->type == OPERAND_REGISTER &&
             op1->type == OPERAND_IMMEDIATE) {
-            buf[pos++] = 0xB8 + reg_number(op0->base);
+            buf[pos++] = 0xB8 + reg_code(r0);
             int v = op1->immediate;
             buf[pos++] =  v        & 0xFF;
             buf[pos++] = (v >> 8)  & 0xFF;
@@ -360,22 +408,22 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
             op1->type == OPERAND_REGISTER) {
             buf[pos++] = 0x89;
             buf[pos++] = build_modrm(0x03,
-                                     reg_number(op1->base),
-                                     reg_number(op0->base));
+                                     reg_code(reg_number(op1->base)),
+                                     reg_code(r0));
             return pos;
         }
         /* MOV reg, mem */
         if (op0->type == OPERAND_REGISTER &&
             op1->type == OPERAND_MEMORY) {
             buf[pos++] = 0x8B;
-            pos += encode_memory(op1, reg_number(op0->base), buf + pos);
+            pos += encode_memory(op1, reg_code(r0), buf + pos);
             return pos;
         }
         /* MOV mem, reg */
         if (op0->type == OPERAND_MEMORY &&
             op1->type == OPERAND_REGISTER) {
             buf[pos++] = 0x89;
-            pos += encode_memory(op0, reg_number(op1->base), buf + pos);
+            pos += encode_memory(op0, reg_code(reg_number(op1->base)), buf + pos);
             return pos;
         }
     }
@@ -385,7 +433,7 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
         if (op0->type == OPERAND_REGISTER &&
             op1->type == OPERAND_MEMORY) {
             buf[pos++] = 0x8D;
-            pos += encode_memory(op1, reg_number(op0->base), buf + pos);
+            pos += encode_memory(op1, reg_code(reg_number(op0->base)), buf + pos);
             return pos;
         }
     }
@@ -403,19 +451,17 @@ int encode_instruction(ASTNode *node, SymbolTable *symbols,
     else if (strcmp(m, "XOR") == 0) { alu_opcode_rr=0x31; alu_opcode_ri=0x81; alu_ext=6; }
 
     if (alu_opcode_rr) {
-        /* reg, reg */
         if (op1->type == OPERAND_REGISTER) {
             buf[pos++] = alu_opcode_rr;
             buf[pos++] = build_modrm(0x03,
-                                     reg_number(op1->base),
-                                     reg_number(op0->base));
+                                     reg_code(reg_number(op1->base)),
+                                     reg_code(reg_number(op0->base)));
             return pos;
         }
-        /* reg, imm32 */
         if (op1->type == OPERAND_IMMEDIATE) {
             buf[pos++] = alu_opcode_ri;
             buf[pos++] = build_modrm(0x03, alu_ext,
-                                     reg_number(op0->base));
+                                     reg_code(reg_number(op0->base)));
             int v = op1->immediate;
             buf[pos++] =  v        & 0xFF;
             buf[pos++] = (v >> 8)  & 0xFF;
