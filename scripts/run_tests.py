@@ -63,7 +63,8 @@ TESTS_SINGLE = [
     },
     {
         "name":  "Simbolos externos y relocaciones",
-        "cmd":   "./assembler -a examples/test_extern.asm -o /tmp/test_extern.o && ./assembler -p /tmp/test_extern.on",
+        "cmd":   "./assembler -a examples/test_extern.asm -o /tmp/test_extern.o && "
+                 "./assembler -p /tmp/test_extern.o",
     },
     {
         "name":  "SIB — todas las escalas",
